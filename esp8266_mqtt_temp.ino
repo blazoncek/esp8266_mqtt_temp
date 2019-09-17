@@ -296,17 +296,17 @@ void setup() {
   Serial.println("mounting FS...");
 #endif
 
-  if (SPIFFS.begin()) {
+  if ( SPIFFS.begin() ) {
 #if DEBUG
     Serial.println("mounted file system");
 #endif
-    if (SPIFFS.exists("/config.json")) {
+    if ( SPIFFS.exists("/config.json") ) {
       //file exists, reading and loading
 #if DEBUG
       Serial.println("reading config file");
 #endif
       File configFile = SPIFFS.open("/config.json", "r");
-      if (configFile) {
+      if ( configFile ) {
 #if DEBUG
         Serial.println("opened config file");
 #endif
@@ -334,13 +334,17 @@ void setup() {
 #endif
         }
       }
+    } else {
+#if DEBUG
+      Serial.println("formatting FS");
+#endif
+      //clean FS, for testing
+      SPIFFS.format();
     }
   } else {
 #if DEBUG
     Serial.println("failed to mount FS");
 #endif
-    //clean FS, for testing
-    //SPIFFS.format();
   }
   //end read
 
