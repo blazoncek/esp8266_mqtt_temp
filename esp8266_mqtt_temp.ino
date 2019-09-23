@@ -208,7 +208,7 @@ void setup() {
     relayState[i] = (initRelays >> 1) & 1;
     digitalWrite(relays[i], relayState[i]? HIGH: LOW);
 #if DEBUG
-    Serial.print(relayState[i]);
+    Serial.print(relayState[i],DEC);
 #endif
   }
 #if DEBUG
@@ -500,7 +500,7 @@ void loop() {
 #endif
 
 #ifdef ONEWIRE
-    // may use non-standard Shelly MQTT API (shellies/shellyht-MAC/sensor/temperature/i)
+    // may use non-standard Shelly MQTT API (shellies/shellyhtx-MAC/sensor/temperature/i)
     for ( int i=0; i<numThermometers; i++ ) {
       if ( *thermometers[i] ) {
         // not a faulty thermometer
@@ -606,7 +606,9 @@ void reconnect() {
     // Attempt to connect
     if ( strlen(username)==0? client.connect(clientId): client.connect(clientId, username, password) ) {
       // Once connected, publish an announcement...
-      //client.publish(outTopic, "hello world");
+      sprintf(outTopic, "%s/%s/announce", MQTTBASE, clientId);
+      sprintf(msg, "Hello there. My IP is %s", WiFi.localIP().toString().c_str());
+      client.publish(outTopic, msg);
       // ... and resubscribe
       sprintf(inTopic, "%s/%s/#", MQTTBASE, clientId);
       client.subscribe(inTopic);
