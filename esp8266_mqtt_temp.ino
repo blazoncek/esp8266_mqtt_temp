@@ -16,11 +16,14 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 
-#define DEBUG   1
+#define DEBUG 1
 
-// digital input
-//#define DINPUT D0
-//int DInputState = 0;
+// analog input (A0)
+#define ANALOG 1  // enable analog input
+
+// digital input  // general purpose input 
+#define DINPUT D0
+int DInputState = 0;
 
 /*
 #include <OneWire.h>
@@ -48,7 +51,7 @@ float tempAdjust = 0.0; // temperature adjustment for wacky DHT sensors (retriev
 //*/
 
 // relay pins
-#define RELAYS 1  //number of relays used (max 4)
+#define RELAYS 4  //number of relays used (max 4)
 const int relays[4] = {D5, D6, D7, D8}; // relay pins
 int relayState[4] = {0, 0, 0, 0};       // relay states (retrieved from EEPROM in setup()
 
@@ -168,113 +171,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void setup() {
   Serial.begin(115200);
 
-  // Initialize the BUILTIN_LED pin as an output & set initial state LED off
+  // Initialize the BUILTIN_LED pin as an output & set initial state LED on
   pinMode(BUILTIN_LED, OUTPUT);
-  digitalWrite(BUILTIN_LED, HIGH);
+  digitalWrite(BUILTIN_LED, LOW);
   
-  // request 10 bytes from EEPROM
-  EEPROM.begin(10);
-
-#if DEBUG
-  Serial.println("");
-  Serial.print("EEPROM data: ");
-  char str[11];
-  EEPROM.get(0,str);
-  for ( int i=0; i<10; i++ ) {
-//    str[i] = EEPROM.read(i);
-    Serial.print(str[i], HEX);
-    Serial.print(":");
-  }
-  str[10] = '\0';
-  Serial.print(" (");
-  Serial.print(str);
-  Serial.println(")");
-#endif
-
-#ifdef DINPUT
-  pinMode(DINPUT, INPUT);
-#endif
-
-#if RELAYS
-  // initialize relay pins
-#if DEBUG
-  Serial.print("Relay states: ");
-#endif
-  // 10th byte contain 8 relay worth of initial states
-  int initRelays = EEPROM.read(9);
-  // relay states are stored in bits
-  for (int i=0; i<RELAYS; i++ ) {
-    pinMode(relays[i], OUTPUT);
-    relayState[i] = (initRelays >> 1) & 1;
-    digitalWrite(relays[i], relayState[i]? HIGH: LOW);
-#if DEBUG
-    Serial.print(relayState[i],DEC);
-#endif
-  }
-#if DEBUG
-  Serial.println("");
-#endif
-#endif
-
-#ifdef DHTTYPE
-  // initialize DHT sensor
-  dht.begin();
-  char temp[8];
-  EEPROM.get(0,temp);
-  tempAdjust = atof(temp);  // temperature adjustment (set via MQTT message)
-#if DEBUG
-  Serial.print("Temperature adjust: ");
-  Serial.println(tempAdjust, DEC);
-#endif
-#endif
-
-#ifdef ONEWIRE
-  // OneWire temperature sensors
-  byte *tmpAddr, addr[8];
-
-  // Start up the library
-  sensors.begin();
-
-  // locate devices on the bus
-#if DEBUG
-  Serial.println("Locating OneWire devices...");
-  Serial.print("Found ");
-  Serial.print(numSensors=sensors.getDeviceCount(), DEC);
-  Serial.println(" devices.");
-  // report parasite power requirements
-  Serial.print("Parasite power is: ");
-  if (sensors.isParasitePowerMode()) Serial.println("ON");
-  else Serial.println("OFF");
-#else
-  numSensors = sensors.getDeviceCount();
-#endif
-  oneWire.reset_search();
-  for ( int i=0; !oneWire.search(addr) && i<16; i++ ) {
-#if DEBUG
-      Serial.print("Sensor found: ");
-      for (uint8_t j = 0; j < 8; j++) {
-        // zero pad the address if necessary
-        if (addr[j] < 16) Serial.print("0");
-        Serial.print(addr[j], HEX);
-      }
-      Serial.println("");
-#endif
-    if (OneWire::crc8(addr, 7) != addr[7])
-      Serial.println("CRC error.");
-      thermometers[i] = null;
-    else {
-      // store up to 16 sensor addresses
-      tmpAddr = (byte*)malloc(8);
-      memcpy(tmpAddr,addr,8);
-      sensors.setResolution(tmpAddr, TEMPERATURE_PRECISION);
-      thermometers[i] = (DeviceAddress *)tmpAddr;
-    }
-  }
-#endif
-
-  // done reading EEPROM
-  EEPROM.end();
-
   String WiFiMAC = WiFi.macAddress();
   WiFiMAC.replace(":","");
   WiFiMAC.toCharArray(mac_address, 16);
@@ -428,6 +328,14 @@ void setup() {
 #endif
       serializeJson(doc, configFile);
       configFile.close();
+
+      // clear 10 bytes from EEPROM
+      char str[10]="0.0\0\0\0\0\0\0\0";
+      EEPROM.begin(10);
+      EEPROM.put(10, str);
+      EEPROM.commit();
+      EEPROM.end();
+      delay(120);
     }
   }
 //----------------------------------------------------------
@@ -443,8 +351,111 @@ void setup() {
   Serial.println(WiFi.localIP());
 #endif
   
-  // if connected set state LED on
-  digitalWrite(BUILTIN_LED, LOW);
+  // if connected set state LED off
+  digitalWrite(BUILTIN_LED, HIGH);
+
+  // request 10 bytes from EEPROM
+  EEPROM.begin(10);
+
+#if DEBUG
+  Serial.println("");
+  Serial.print("EEPROM data: ");
+  char str[11];
+  EEPROM.get(0,str);
+  for ( int i=0; i<10; i++ ) {
+//    str[i] = EEPROM.read(i);
+    Serial.print(str[i], HEX);
+    Serial.print(":");
+  }
+  str[10] = '\0';
+  Serial.print(" (");
+  Serial.print(str);
+  Serial.println(")");
+#endif
+
+#ifdef DINPUT
+  pinMode(DINPUT, INPUT);
+#endif
+
+#if RELAYS
+  // initialize relay pins
+#if DEBUG
+  Serial.print("Relay states: ");
+#endif
+  // 10th byte contain 8 relay worth of initial states
+  int initRelays = EEPROM.read(9);
+  // relay states are stored in bits
+  for (int i=0; i<RELAYS; i++ ) {
+    pinMode(relays[i], OUTPUT);
+    relayState[i] = (initRelays >> 1) & 1;
+    digitalWrite(relays[i], relayState[i]? HIGH: LOW);
+#if DEBUG
+    Serial.print(relayState[i],DEC);
+#endif
+  }
+#if DEBUG
+  Serial.println("");
+#endif
+#endif
+
+#ifdef DHTTYPE
+  // initialize DHT sensor
+  dht.begin();
+  char temp[8];
+  EEPROM.get(0,temp);
+  tempAdjust = atof(temp);  // temperature adjustment (set via MQTT message)
+#if DEBUG
+  Serial.print("Temperature adjust: ");
+  Serial.println(tempAdjust, DEC);
+#endif
+#endif
+
+#ifdef ONEWIRE
+  // OneWire temperature sensors
+  byte *tmpAddr, addr[8];
+
+  // Start up the library
+  sensors.begin();
+
+  // locate devices on the bus
+#if DEBUG
+  Serial.println("Locating OneWire devices...");
+  Serial.print("Found ");
+  Serial.print(numSensors=sensors.getDeviceCount(), DEC);
+  Serial.println(" devices.");
+  // report parasite power requirements
+  Serial.print("Parasite power is: ");
+  if (sensors.isParasitePowerMode()) Serial.println("ON");
+  else Serial.println("OFF");
+#else
+  numSensors = sensors.getDeviceCount();
+#endif
+  oneWire.reset_search();
+  for ( int i=0; !oneWire.search(addr) && i<16; i++ ) {
+#if DEBUG
+      Serial.print("Sensor found: ");
+      for (uint8_t j = 0; j < 8; j++) {
+        // zero pad the address if necessary
+        if (addr[j] < 16) Serial.print("0");
+        Serial.print(addr[j], HEX);
+      }
+      Serial.println("");
+#endif
+    if (OneWire::crc8(addr, 7) != addr[7])
+      Serial.println("CRC error.");
+      thermometers[i] = null;
+    else {
+      // store up to 16 sensor addresses
+      tmpAddr = (byte*)malloc(8);
+      memcpy(tmpAddr,addr,8);
+      sensors.setResolution(tmpAddr, TEMPERATURE_PRECISION);
+      thermometers[i] = (DeviceAddress *)tmpAddr;
+    }
+  }
+#endif
+
+  // done reading EEPROM
+  EEPROM.end();
 
   // initialize MQTT connection & provide callback function
   client.setServer(mqtt_server, atoi(mqtt_port));
@@ -472,11 +483,13 @@ void loop() {
     // Read temperature as Celsius (the default)
     float t = dht.readTemperature();
     // Read temperature as Fahrenheit (isFahrenheit = true)
-    //float f = dht.readTemperature(true);
+    float f = dht.readTemperature(true);
     
     // Check if any reads failed and exit early (to try again).
-    if (isnan(h) || isnan(t) /*|| isnan(f)*/) {
+    if (isnan(h) || isnan(t) || isnan(f)) {
       Serial.println("Failed to read from DHT sensor!");
+      sprintf(outTopic, "%s/%s/sensor/temperature", MQTTBASE, clientId);
+      sprintf(msg, "err");
     } else {
 #if DEBUG
       Serial.print("DHT temperature: ");
@@ -489,12 +502,11 @@ void loop() {
       sprintf(outTopic, "%s/%s/sensor/temperature", MQTTBASE, clientId);
       sprintf(msg, "%.2f", t + tempAdjust);
       client.publish(outTopic, msg);
+      sprintf(outTopic, "%s/%s/sensor/temperature_f", MQTTBASE, clientId);
+      sprintf(msg, "%.2f", f + tempAdjust*(float)(9/5));
+      client.publish(outTopic, msg);
       sprintf(outTopic, "%s/%s/sensor/humidity", MQTTBASE, clientId);
       sprintf(msg, "%.2f", h);
-      client.publish(outTopic, msg);
-      // non-standard Shelly API
-      sprintf(outTopic, "%s/%s/sensor/temphum", MQTTBASE, clientId);
-      sprintf(msg, "%.2f;%.2f", t + tempAdjust, h);
       client.publish(outTopic, msg);
     }
 #endif
@@ -552,7 +564,13 @@ void loop() {
     // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 3.2V):
     char voltage[10];
     sprintf(outTopic, "%s/%s/analog", MQTTBASE, clientId);
-    client.publish(outTopic, ftoa(sensorValue * (3.2 / 1023.0), voltage, 3));
+    sprintf(msg, "%1.3f", (float)sensorValue / 1023.0);
+    client.publish(outTopic, msg);
+    // may use Shelly MQTT API as (shellies/shellyem-MAC/emeter/i/voltage)
+    sprintf(outTopic, "%s/%s/emeter/0/voltage", MQTTBASE, clientId);
+    sprintf(msg, "%1.3f", (float)sensorValue * (3.2 / 1023.0));
+    client.publish(outTopic, msg);
+    //client.publish(outTopic, ftoa(sensorValue * (3.2 / 1023.0), voltage, 3));
 #if DEBUG
     // print out the value you read:
     Serial.print("Analog voltage: ");
