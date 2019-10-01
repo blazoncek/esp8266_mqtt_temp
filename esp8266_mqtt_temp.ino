@@ -25,37 +25,35 @@
 #define ANALOG 1  // enable analog input
 
 // general purpose digital inputs (pins D0 & D1)
-int D0InputState = 0;
-int D1InputState = 0;
+int D0InputState = 0; // pin D0
+int D1InputState = 0; // pin D1
 
-#define ONEWIRE D2          // use pin D2
 #define TEMPERATURE_PRECISION 9
-OneWire oneWire(ONEWIRE);   // on pin D2 (a 4.7K pull-up resistor is necessary)
+OneWire oneWire(D2);   // on pin D2 (a 4.7K pull-up resistor is necessary)
 DallasTemperature sensors(&oneWire);
 DeviceAddress *thermometers[10];  // arrays to hold device addresses (up to 10)
 int numThermometers = 0;
 
 // PIR sensor or button/switch pin & state
-#define PIRPIN  D3      // pin used for PIR (default D3)
+#define PIRPIN  D3      // pin used for PIR (default D3 for Wemos D1 mini shield)
 int PIRState = 0;       // initialize PIR state
 
 // DHT type temperature/humidity sensors
-#define DHTPIN  D4      // what pin we're connected to (default D4)
+#define DHTPIN  D4      // what pin we're connected to (default D4 for Wemos D1 mini shield)
 float tempAdjust = 0.0; // temperature adjustment for wacky DHT sensors (retrieved from EEPROM)
-int dhtType = 0;   // DHT11, DHT22, DHT21, none(0)
-DHT *dht;
+DHT *dht = NULL;        // DHT11, DHT22, DHT21, none(0)
 
 // relay pins
 const int relays[4] = {D5, D6, D7, D8}; // relay pins
 int relayState[4] = {0, 0, 0, 0};       // relay states (retrieved from EEPROM in setup()
-int numRelays = 0;
+int numRelays = 0;                      // number of relays used
 
 // Update these with values suitable for your network.
 char mqtt_server[40] = "192.168.70.11";
 char mqtt_port[7]    = "1883";
 char username[33]    = "";
 char password[33]    = "";
-char MQTTBASE[16]    = "shellies"; // use shellies for Shelly MQTT Domoticz plugin integration
+char MQTTBASE[16]    = "shellies"; // use shellies API for Shelly MQTT Domoticz plugin integration
 
 char c_relays[2]     = "0";
 char c_dhttype[6]    = "none";
@@ -67,20 +65,19 @@ char c_pirsensor[2]  = "0";
 bool shouldSaveConfig = false;
 
 long lastMsg = 0;
-char msg[50];
-char mac_address[16];
-char inTopic[64];   // add MAC address in WiFi setup code
-char outTopic[64];  // add MAC address in WiFi setup code
-char clientId[20];  // MQTT client ID
+char msg[128];          // MQTT message buffer
+char mac_address[16];   // add MAC address in WiFi setup code
+char outTopic[64];      // MQTT topic buffer
+char clientId[20];      // MQTT client ID ([esp8266|esp01|D1mini|...]_MACaddress)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 // private functions
 void mqtt_callback(char*, byte*, unsigned int);
-void reconnect();
+void mqtt_reconnect();
 char *ftoa(float,char*,int d=2);
-void saveConfigCallback ();
+void saveConfigCallback();
 
 
 //-----------------------------------------------------------
@@ -258,7 +255,8 @@ void setup() {
   strcpy(c_d0enabled, custom_d0enabled.getValue());
 
   numRelays = max(atoi(c_relays),4);
-  
+  c_relays[0] = '0' + numRelays;
+
   if ( strcmp(c_dhttype,"DHT11")==0 ) {
     dht = new DHT(DHTPIN, DHT11);
   } else if ( strcmp(c_dhttype,"DHT21")==0 ) {
@@ -267,6 +265,7 @@ void setup() {
     dht = new DHT(DHTPIN, DHT22);
   } else {
     dht = NULL;
+    strcpy(c_dhttype,"none");
   }
 
   //save the custom parameters to FS
@@ -422,7 +421,7 @@ void setup() {
 void loop() {
 
   if (!client.connected()) {
-    reconnect();
+    mqtt_reconnect();
   }
   client.loop();
 
@@ -589,6 +588,7 @@ void loop() {
 //---------------------------------------------------
 // MQTT callback function
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+
 #if DEBUG
   Serial.print("Message arrived [");
   Serial.print(topic);
@@ -611,8 +611,8 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
   } else if ( strstr(topic,"/relay/") && strstr(topic,"/command") ) {
     // topic contains relay command
 
-    int relayId = (int)(*(strstr(topic,"/command")-1) - '0');  // get the relay id
-    if ( relayId < numRelays-1 ) {
+    int relayId = (int)(*(strstr(topic,"/command")-1) - '0');  // get the relay id (0-3)
+    if ( relayId < numRelays ) {
       if ( strncmp((char*)payload,"on",length)==0 ) {
         // message is on
         digitalWrite(relays[relayId], HIGH);  // Turn the relay on
@@ -646,7 +646,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
 #endif
     }
   } else if ( strstr(topic,"/temperature/command") ) {
-    // insert temperature adjustment and store it into non volatile memory
+    // insert temperature adjustment and store it into non volatile memory (wonky DHT sensors)
     
     char tmp[8];
     strncpy(tmp,(char*)payload,length>7? 7: length);
@@ -669,7 +669,9 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
 
 //----------------------------------------------------
 // MQTT reconnect handling
-void reconnect() {
+void mqtt_reconnect() {
+  char inTopic[64];
+  
   // Loop until we're reconnected
   while ( !client.connected() ) {
 #if DEBUG
@@ -678,8 +680,17 @@ void reconnect() {
     // Attempt to connect
     if ( strlen(username)==0? client.connect(clientId): client.connect(clientId, username, password) ) {
       // Once connected, publish an announcement...
+      DynamicJsonDocument doc(512);
+      doc["mac"] = WiFi.macAddress(); //.toString().c_str();
+      doc["ip"] = WiFi.localIP();     //.toString().c_str();
+      doc["relays"] = c_relays;
+      doc["dhttype"] = c_dhttype;
+      doc["onewire"] = c_onewire;
+      doc["pirsensor"] = c_pirsensor;
+      doc["d0enabled"] = c_d0enabled;
+      serializeJson(doc, msg);
       sprintf(outTopic, "%s/%s/announce", MQTTBASE, clientId);
-      sprintf(msg, "Hello there. My IP is %s", WiFi.localIP().toString().c_str());
+      //sprintf(msg, "Hello there. My IP is %s", WiFi.localIP().toString().c_str());
       client.publish(outTopic, msg);
       // ... and resubscribe
       sprintf(inTopic, "%s/%s/#", MQTTBASE, clientId);
