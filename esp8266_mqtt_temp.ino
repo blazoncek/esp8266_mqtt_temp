@@ -25,7 +25,7 @@
 #define ANALOG 1  // enable analog input
 
 // general purpose digital inputs (pins D0 & D1)
-int D0InputState = 0; // pin D0
+int D0InputState = 0; // pin D0 (not very suitable for input, used for wakeup from deep sleep)
 int D1InputState = 0; // pin D1
 
 #define TEMPERATURE_PRECISION 9
@@ -53,7 +53,7 @@ char mqtt_server[40] = "192.168.70.11";
 char mqtt_port[7]    = "1883";
 char username[33]    = "";
 char password[33]    = "";
-char MQTTBASE[16]    = "shellies"; // use shellies API for Shelly MQTT Domoticz plugin integration
+char MQTTBASE[16]    = "shellies"; // uses shellies API for Shelly MQTT Domoticz plugin integration
 
 char c_relays[2]     = "0";
 char c_dhttype[6]    = "none";
