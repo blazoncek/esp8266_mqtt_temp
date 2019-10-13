@@ -22,11 +22,11 @@
 #define DEBUG 1
 
 // analog input (A0)
-#define ANALOG 1  // enable analog input
+//#define ANALOG 1  // enable analog input
 
 // general purpose digital inputs (pins D0 & D1)
-int D0InputState = 0; // pin D0 (not very suitable for input, used for wakeup from deep sleep)
-int D1InputState = 0; // pin D1
+//int D0InputState = 0; // pin D0 (not very suitable for input, used for wakeup from deep sleep)
+int D1InputState = 0;   // pin D1
 
 #define TEMPERATURE_PRECISION 9
 OneWire oneWire(D2);   // on pin D2 (a 4.7K pull-up resistor is necessary)
@@ -35,11 +35,11 @@ DeviceAddress *thermometers[10];  // arrays to hold device addresses (up to 10)
 int numThermometers = 0;
 
 // PIR sensor or button/switch pin & state
-#define PIRPIN  D3      // pin used for PIR (default D3 for Wemos D1 mini shield)
+int PIRPIN = D3;         // pin used for PIR (default D3 for Wemos D1 mini shield)
 int PIRState = 0;       // initialize PIR state
 
 // DHT type temperature/humidity sensors
-#define DHTPIN  D4      // what pin we're connected to (default D4 for Wemos D1 mini shield)
+#define DHTPIN D4       // what pin we're connected to (default D4 for Wemos D1 mini shield)
 float tempAdjust = 0.0; // temperature adjustment for wacky DHT sensors (retrieved from EEPROM)
 DHT *dht = NULL;        // DHT11, DHT22, DHT21, none(0)
 
@@ -58,14 +58,14 @@ char MQTTBASE[16]    = "shellies"; // uses shellies API for Shelly MQTT Domoticz
 char c_relays[2]     = "0";
 char c_dhttype[6]    = "none";
 char c_onewire[2]    = "0";
-char c_d0enabled[2]  = "0";
-char c_pirsensor[2]  = "0";
+char c_d1enabled[2]  = "0";
+char c_pirsensor[3]  = "0";
 
 // flag for saving data from WiFiManager
 bool shouldSaveConfig = false;
 
 long lastMsg = 0;
-char msg[128];          // MQTT message buffer
+char msg[256];          // MQTT message buffer
 char mac_address[16];   // add MAC address in WiFi setup code
 char outTopic[64];      // MQTT topic buffer
 char clientId[20];      // MQTT client ID ([esp8266|esp01|D1mini|...]_MACaddress)
@@ -149,7 +149,7 @@ void setup() {
           strcpy(c_dhttype, doc["dhttype"]);
           strcpy(c_onewire, doc["onewire"]);
           strcpy(c_pirsensor, doc["pirsensor"]);
-          strcpy(c_d0enabled, doc["d0enabled"]);
+          strcpy(c_d1enabled, doc["d1enabled"]);
         } else {
 #if DEBUG
           Serial.println("failed to load json config");
@@ -180,10 +180,10 @@ void setup() {
   WiFiManagerParameter custom_mqtt_base("base", "MQTT topic base", MQTTBASE, 15);
 
   WiFiManagerParameter custom_relays("relays", "Number of relays (0-4)", c_relays, 1);
-  WiFiManagerParameter custom_dhttype("dhttype", "DHT sensor type (DHT11,DHT22,none)", c_dhttype, 5);
-  WiFiManagerParameter custom_onewire("onewire", "OneWire enabled (0/1)", c_onewire, 1);
-  WiFiManagerParameter custom_pirsensor("pirsensor", "PIR sensor enabled (0/1)", c_pirsensor, 1);
-  WiFiManagerParameter custom_d0enabled("d0enabled", "Digital inputs enabled (0/1/2)", c_d0enabled, 1);
+  WiFiManagerParameter custom_dhttype("dhttype", "DHT sensor D4 type (DHT11,DHT22,none)", c_dhttype, 5);
+  WiFiManagerParameter custom_onewire("onewire", "OneWire D2 enabled (0/1)", c_onewire, 1);
+  WiFiManagerParameter custom_pirsensor("pirsensor", "PIR sensor D3 enabled (0/1)", c_pirsensor, 2);
+  WiFiManagerParameter custom_d1enabled("d1enabled", "Digital input D1 enabled (0/1)", c_d1enabled, 1);
 
   // WiFiManager
   // Local intialization. Once its business is done, there is no need to keep it around
@@ -209,7 +209,7 @@ void setup() {
   wifiManager.addParameter(&custom_dhttype);
   wifiManager.addParameter(&custom_onewire);
   wifiManager.addParameter(&custom_pirsensor);
-  wifiManager.addParameter(&custom_d0enabled);
+  wifiManager.addParameter(&custom_d1enabled);
 
   // set minimu quality of signal so it ignores AP's under that quality
   // defaults to 8%
@@ -252,10 +252,14 @@ void setup() {
   strcpy(c_dhttype, custom_dhttype.getValue());
   strcpy(c_onewire, custom_onewire.getValue());
   strcpy(c_pirsensor, custom_pirsensor.getValue());
-  strcpy(c_d0enabled, custom_d0enabled.getValue());
+  strcpy(c_d1enabled, custom_d1enabled.getValue());
 
-  numRelays = max(atoi(c_relays),4);
+  numRelays = max(min(atoi(c_relays),4),0);
   c_relays[0] = '0' + numRelays;
+#if DEBUG
+    Serial.println("Number of relays: ");
+    Serial.println(numRelays, DEC);
+#endif
 
   if ( strcmp(c_dhttype,"DHT11")==0 ) {
     dht = new DHT(DHTPIN, DHT11);
@@ -266,6 +270,15 @@ void setup() {
   } else {
     dht = NULL;
     strcpy(c_dhttype,"none");
+  }
+
+  switch ( c_pirsensor[0] ) {
+    case '4' : PIRPIN = D4; break;
+    case '5' : PIRPIN = D5; break;
+    case '6' : PIRPIN = D6; break;
+    case '7' : PIRPIN = D7; break;
+    case '8' : PIRPIN = D8; break;
+    default  : PIRPIN = D3; break;
   }
 
   //save the custom parameters to FS
@@ -284,7 +297,7 @@ void setup() {
     doc["dhttype"] = c_dhttype;
     doc["onewire"] = c_onewire;
     doc["pirsensor"] = c_pirsensor;
-    doc["d0enabled"] = c_d0enabled;
+    doc["d1enabled"] = c_d1enabled;
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
@@ -295,14 +308,17 @@ void setup() {
 #endif
       serializeJson(doc, configFile);
       configFile.close();
-
-      // clear 10 bytes from EEPROM
-      EEPROM.begin(10);
-      EEPROM.put(10, "0.0\0\0\0\0\0\0\0");
-      EEPROM.commit();
-      EEPROM.end();
-      delay(120);
     }
+
+    // clear 10 bytes from EEPROM
+    EEPROM.begin(10);
+    EEPROM.put(10, "0.0\0\0\0\0\0\0\0");
+    EEPROM.commit();
+    EEPROM.end();
+    delay(120);
+#if DEBUG
+    Serial.println("saved EEPROM");
+#endif
   }
 //----------------------------------------------------------
 
@@ -326,8 +342,7 @@ void setup() {
   Serial.println(")");
 #endif
 
-  if ( atoi(c_d0enabled) ) {
-    pinMode(D0, INPUT);
+  if ( atoi(c_d1enabled) ) {
     pinMode(D1, INPUT);
   }
 
@@ -506,10 +521,10 @@ void loop() {
       client.publish(outTopic, msg);
     }
 
-    if ( atoi(c_d0enabled) ) {
+    if ( atoi(c_d1enabled) ) {
       // may use Shelly MQTT API as (shellies/shelly1-MAC/input/i)
       sprintf(outTopic, "%s/%s/input/%i", MQTTBASE, clientId, 0);
-      client.publish(outTopic, D0InputState == HIGH? "1": "0");
+      client.publish(outTopic, D1InputState == HIGH? "1": "0");
     }
 
     if ( atoi(c_pirsensor) ) {
@@ -541,29 +556,17 @@ void loop() {
   // end 60s reporting
   }
 
-  if ( atoi(c_d0enabled) ) {
+  if ( atoi(c_d1enabled) ) {
     // detect digital input cahnge and publish immediately
-    int lDState = digitalRead(D0);
-    if (lDState != D0InputState ) {
-      D0InputState = lDState;
+    int lDState = digitalRead(D1);
+    if (lDState != D1InputState ) {
+      D1InputState = lDState;
       sprintf(outTopic, "%s/%s/input/%i", MQTTBASE, clientId, 0);
-      client.publish(outTopic, D0InputState == HIGH? "1": "0");
+      client.publish(outTopic, D1InputState == HIGH? "1": "0");
 #if DEBUG
-      Serial.print("Digital input D0: ");
-      Serial.println(D0InputState == HIGH? "1": "0");
+      Serial.print("Digital input D1: ");
+      Serial.println(D1InputState == HIGH? "1": "0");
 #endif
-    }
-    if ( atoi(c_d0enabled)==2 ) {
-      lDState = digitalRead(D1);
-      if ( lDState != D1InputState ) {
-        D1InputState = lDState;
-        sprintf(outTopic, "%s/%s/input/%i", MQTTBASE, clientId, 1);
-        client.publish(outTopic, D1InputState == HIGH? "1": "0");
-#if DEBUG
-        Serial.print("Digital input D1: ");
-        Serial.println(D1InputState == HIGH? "1": "0");
-#endif
-      }
     }
   }
 
@@ -627,6 +630,12 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       sprintf(outTopic, "%s/%s/relay/%i", MQTTBASE, clientId, relayId);
       sprintf(msg, relayState[relayId]?"on":"off");
       client.publish(outTopic, msg);
+#if DEBUG
+      Serial.print("Message sent [");
+      Serial.print(outTopic);
+      Serial.print("] ");
+      Serial.println(msg);
+#endif
 
       // permanently store relay states to nonvolatile memory
       int b=0;
@@ -638,11 +647,8 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       EEPROM.commit();
       EEPROM.end();
 #if DEBUG
-      Serial.println(b,HEX);
-      Serial.print("Message sent [");
-      Serial.print(outTopic);
-      Serial.print("] ");
-      Serial.println(msg);
+      Serial.print("EEPROM save: ");
+      Serial.println(b,BIN);
 #endif
     }
   } else if ( strstr(topic,"/temperature/command") ) {
@@ -675,23 +681,26 @@ void mqtt_reconnect() {
   // Loop until we're reconnected
   while ( !client.connected() ) {
 #if DEBUG
-    Serial.print("Attempting MQTT connection...");
+    Serial.println("Attempting MQTT connection...");
 #endif
     // Attempt to connect
     if ( strlen(username)==0? client.connect(clientId): client.connect(clientId, username, password) ) {
       // Once connected, publish an announcement...
-      DynamicJsonDocument doc(512);
+      DynamicJsonDocument doc(256);
       doc["mac"] = WiFi.macAddress(); //.toString().c_str();
-      doc["ip"] = WiFi.localIP();     //.toString().c_str();
+      doc["ip"] = WiFi.localIP().toString();  //.c_str();
       doc["relays"] = c_relays;
       doc["dhttype"] = c_dhttype;
       doc["onewire"] = c_onewire;
       doc["pirsensor"] = c_pirsensor;
-      doc["d0enabled"] = c_d0enabled;
-      serializeJson(doc, msg);
+      doc["d1enabled"] = c_d1enabled;
+      doc["tempadjust"] = ftoa(tempAdjust, inTopic, 2);
+      size_t n = serializeJson(doc, msg);
+#if DEBUG
+      Serial.println(msg);
+#endif
       sprintf(outTopic, "%s/%s/announce", MQTTBASE, clientId);
-      //sprintf(msg, "Hello there. My IP is %s", WiFi.localIP().toString().c_str());
-      client.publish(outTopic, msg);
+      client.publish(outTopic, msg, n);
       // ... and resubscribe
       sprintf(inTopic, "%s/%s/#", MQTTBASE, clientId);
       client.subscribe(inTopic);
