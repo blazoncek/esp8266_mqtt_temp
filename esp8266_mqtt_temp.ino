@@ -469,17 +469,17 @@ void loop() {
   #endif
         // may use Shelly MQTT API (shellies/shellyht-MAC/sensor/temperature)
         sprintf(outTopic, "%s/%s/sensor/temperature", MQTTBASE, clientId);
-        sprintf(msg, "%.2f", t + tempAdjust);
+        sprintf(msg, "%.1f", t + tempAdjust);
         client.publish(outTopic, msg);
         sprintf(outTopic, "%s/%s/sensor/temperature_f", MQTTBASE, clientId);
-        sprintf(msg, "%.2f", f + tempAdjust*(float)(9/5));
+        sprintf(msg, "%.1f", f + tempAdjust*(float)(9/5));
         client.publish(outTopic, msg);
         sprintf(outTopic, "%s/%s/sensor/humidity", MQTTBASE, clientId);
-        sprintf(msg, "%.2f", h);
+        sprintf(msg, "%.1f", h);
         client.publish(outTopic, msg);
-        if ( round(tempAdjust*10) == 0.0 ) {
+        if ( round(tempAdjust*10) != 0.0 ) {
           sprintf(outTopic, "%s/%s/temp_adjust", MQTTBASE, clientId);
-          sprintf(msg, "%.2f", tempAdjust);
+          sprintf(msg, "%.1f", tempAdjust);
           client.publish(outTopic, msg);
         }
       }
@@ -508,7 +508,7 @@ void loop() {
             sprintf(outTopic, "%s/%s/temperature", MQTTBASE, clientId);
           else
             sprintf(outTopic, "%s/%s/temperature/%i", MQTTBASE, clientId, i);
-          sprintf(msg, "%.2f", tempC);
+          sprintf(msg, "%.1f", tempC);
           client.publish(outTopic, msg);
         }
       }
