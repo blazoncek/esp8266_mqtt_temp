@@ -29,13 +29,14 @@
 int D1InputState = 0;   // pin D1
 
 #define TEMPERATURE_PRECISION 9
-OneWire oneWire(D2);   // on pin D2 (a 4.7K pull-up resistor is necessary)
-DallasTemperature sensors(&oneWire);
+#define ONEWIRE D2      // on pin D2 (a 4.7K pull-up resistor is necessary)
+OneWire *oneWire;
+DallasTemperature *sensors;
 DeviceAddress *thermometers[10];  // arrays to hold device addresses (up to 10)
 int numThermometers = 0;
 
 // PIR sensor or button/switch pin & state
-int PIRPIN = D3;         // pin used for PIR (default D3 for Wemos D1 mini shield)
+int PIRPIN = D3;        // pin used for PIR (default D3 for Wemos D1 mini shield)
 int PIRState = 0;       // initialize PIR state
 
 // DHT type temperature/humidity sensors
@@ -383,24 +384,25 @@ void setup() {
     // OneWire temperature sensors
     byte *tmpAddr, addr[8];
   
+    oneWire = new OneWire(ONEWIRE);             // no need to free this one
+    sensors = new DallasTemperature(oneWire);   // no need to free this one, too
+  
     // Start up the library
-    sensors.begin();
+    sensors->begin();
   
     // locate devices on the bus
 #if DEBUG
     Serial.println("Locating OneWire devices...");
     Serial.print("Found ");
-    Serial.print(numThermometers=sensors.getDeviceCount(), DEC);
+    Serial.print(sensors->getDeviceCount(), DEC);
     Serial.println(" devices.");
     // report parasite power requirements
     Serial.print("Parasite power is: ");
-    if (sensors.isParasitePowerMode()) Serial.println("ON");
+    if (sensors->isParasitePowerMode()) Serial.println("ON");
     else Serial.println("OFF");
-#else
-    numThermometers = sensors.getDeviceCount();
 #endif
-    oneWire.reset_search();
-    for ( int i=0; !oneWire.search(addr) && i<10; i++ ) {
+    oneWire->reset_search();
+    for ( int i=0; !oneWire->search(addr) && i<10; i++ ) {
 #if DEBUG
         Serial.print("Sensor found: ");
         for ( uint8_t j = 0; j < 8; j++ ) {
@@ -412,13 +414,12 @@ void setup() {
 #endif
       if ( OneWire::crc8(addr, 7) != addr[7] ) {
         Serial.println("CRC error.");
-        thermometers[i] = NULL;
       } else {
         // store up to 16 sensor addresses
         tmpAddr = (byte*)malloc(8); // there is no need to free() this memory
         memcpy(tmpAddr,addr,8);
-        sensors.setResolution(tmpAddr, TEMPERATURE_PRECISION);
-        thermometers[i] = (DeviceAddress *)tmpAddr;
+        sensors->setResolution(tmpAddr, TEMPERATURE_PRECISION);
+        thermometers[numThermometers++] = (DeviceAddress *)tmpAddr;
       }
     }
   }
@@ -488,29 +489,26 @@ void loop() {
     if ( atoi(c_onewire) ) {
       // may use non-standard Shelly MQTT API (shellies/shellyhtx-MAC/temperature/i)
       for ( int i=0; i<numThermometers; i++ ) {
-        if ( *thermometers[i] ) {
-          // not a faulty thermometer
-          float tempC = sensors.getTempC(*thermometers[i]);
+        float tempC = sensors->getTempC(*thermometers[i]);
 #if DEBUG
-          Serial.print("OneWire ");
-          Serial.print(i);
-          Serial.print(" (");
-          for (uint8_t j = 0; j < 8; j++) {
-            // zero pad the address if necessary
-            if ((*thermometers[i])[j] < 16) Serial.print("0");
-            Serial.print((*thermometers[i])[j], HEX);
-          }
-          Serial.print(") : temperature=");
-          Serial.print(tempC);
-          Serial.println("C");
-#endif
-          if ( numThermometers == 1 )
-            sprintf(outTopic, "%s/%s/temperature", MQTTBASE, clientId);
-          else
-            sprintf(outTopic, "%s/%s/temperature/%i", MQTTBASE, clientId, i);
-          sprintf(msg, "%.1f", tempC);
-          client.publish(outTopic, msg);
+        Serial.print("OneWire ");
+        Serial.print(i);
+        Serial.print(" (");
+        for (uint8_t j = 0; j < 8; j++) {
+          // zero pad the address if necessary
+          if ((*thermometers[i])[j] < 16) Serial.print("0");
+          Serial.print((*thermometers[i])[j], HEX);
         }
+        Serial.print(") : temperature=");
+        Serial.print(tempC);
+        Serial.println("C");
+#endif
+        if ( numThermometers == 1 )
+          sprintf(outTopic, "%s/%s/temperature", MQTTBASE, clientId);
+        else
+          sprintf(outTopic, "%s/%s/temperature/%i", MQTTBASE, clientId, i);
+        sprintf(msg, "%.1f", tempC);
+        client.publish(outTopic, msg);
       }
     }
 
