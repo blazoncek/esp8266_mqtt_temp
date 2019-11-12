@@ -39,7 +39,7 @@ int PIRState = 0;       // initialize PIR state
 #define ONEWIREPIN D4   // on pin D4 (a 4.7K pull-up resistor is necessary) (default D2 for Wemos D1 mini shield)
 OneWire *oneWire = NULL;
 DallasTemperature *sensors = NULL;
-DeviceAddress *thermometers[10];  // array to hold device addresses (up to 10)
+DeviceAddress thermometers[10];  // array to hold device addresses (up to 10)
 int numThermometers = 0;
 
 // DHT type temperature/humidity sensors
@@ -337,7 +337,7 @@ void setup() {
 
     // clear 10 bytes from EEPROM
     EEPROM.begin(10);
-    EEPROM.put(10, "0.0\0\0\0\0\0\0\0");
+    EEPROM.put(0, "0.0\0\0\0\0\0\0\0");
     EEPROM.commit();
     EEPROM.end();
     delay(120);
@@ -397,7 +397,7 @@ void setup() {
   }
 
   // set up temperature sensor (either DHT or Dallas)
-  if ( strcpy(c_dhttype,"none")!=0 ) {
+  if ( strcmp(c_dhttype,"none")!=0 ) {
     
     if ( dht ) {
       // initialize DHT sensor
@@ -412,35 +412,42 @@ void setup() {
     } // DHT
   
     if ( oneWire ) {
-      // OneWire temperature sensors
-      byte *tmpAddr, addr[8];
-    
       // Start up the library
       sensors->begin();
     
       // locate devices on the bus
+      numThermometers = sensors->getDeviceCount();
       #if DEBUG
       Serial.println("Locating OneWire devices...");
       Serial.print("Found ");
-      Serial.print(sensors->getDeviceCount(), DEC);
+      Serial.print(numThermometers, DEC);
       Serial.println(" devices.");
       // report parasite power requirements
       Serial.print("Parasite power is: ");
       if (sensors->isParasitePowerMode()) Serial.println("ON");
       else Serial.println("OFF");
       #endif
+      for ( int i=0; i<numThermometers; i++ ) {
+        if ( !sensors->getAddress(thermometers[i], i) ) {
+          numThermometers = i;
+          break;
+        } else {
+          sensors->setResolution(thermometers[i], TEMPERATURE_PRECISION);
+        }
+      }
+/*
       oneWire->reset_search();
-      for ( int i=0; !oneWire->search(addr) && i<10; i++ ) {
+      for ( int i=0; !oneWire->search(&thermometers[i]) && i<10; i++ ) {
         #if DEBUG
         Serial.print("Sensor found: ");
         for ( uint8_t j = 0; j < 8; j++ ) {
           // zero pad the address if necessary
-          if (addr[j] < 16) Serial.print("0");
-          Serial.print(addr[j], HEX);
+          if ((byte*)thermometers[i][j] < 16) Serial.print("0");
+          Serial.print((byte*)thermometers[i][j], HEX);
         }
         Serial.println("");
         #endif
-        if ( OneWire::crc8(addr, 7) != addr[7] ) {
+        if ( OneWire::crc8(thermometers[i], 7) != (byte*)thermometers[i][7] ) {
           #if DEBUG
           Serial.println("CRC error.");
           #endif
@@ -452,6 +459,7 @@ void setup() {
           thermometers[numThermometers++] = (DeviceAddress *)tmpAddr;
         }
       }
+*/
     } // end oneWire
   } // end temperature sensors
 
@@ -525,15 +533,15 @@ void loop() {
     if ( oneWire ) {
       // may use non-standard Shelly MQTT API (shellies/shellyhtx-MAC/temperature/i)
       for ( int i=0; i<numThermometers; i++ ) {
-        float tempC = sensors->getTempC(*thermometers[i]);
+        float tempC = sensors->getTempC(thermometers[i]);
         #if DEBUG
         Serial.print("OneWire ");
         Serial.print(i);
         Serial.print(" (");
         for (uint8_t j = 0; j < 8; j++) {
           // zero pad the address if necessary
-          if ((*thermometers[i])[j] < 16) Serial.print("0");
-          Serial.print((*thermometers[i])[j], HEX);
+          if ((thermometers[i])[j] < 16) Serial.print("0");
+          Serial.print((thermometers[i])[j], HEX);
         }
         Serial.print(") : temperature=");
         Serial.print(tempC);
