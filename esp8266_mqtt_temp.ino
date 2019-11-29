@@ -21,9 +21,6 @@
 
 #define DEBUG 1
 
-// analog input (A0)
-#define ANALOG 1  // enable analog input (D8 used to power ADC)
-
 // general purpose digital inputs (pin D1)
 int D1PIN = D1;
 int D1InputState = 0;   // pin D1
@@ -92,6 +89,7 @@ void setup() {
   char str[11];
 
   Serial.begin(115200);
+  delay(3000);
 
   // Initialize the BUILTIN_LED pin as an output & set initial state LED on
   pinMode(BUILTIN_LED, OUTPUT);
@@ -101,7 +99,7 @@ void setup() {
   WiFiMAC.replace(":","");
   WiFiMAC.toCharArray(mac_address, 16);
   // Create client ID from MAC address
-  sprintf(clientId, "D1mini-%s", &mac_address[6]);
+  sprintf(clientId, "esp-%s", &mac_address[6]);
 
   #if DEBUG
   Serial.println("");
@@ -337,7 +335,7 @@ void setup() {
 
     // clear 10 bytes from EEPROM
     EEPROM.begin(10);
-    EEPROM.put(0, "0.0\0\0\0\0\0\0\0");
+    EEPROM.put(0, "esp0.0\0\0\0\0");
     EEPROM.commit();
     EEPROM.end();
     delay(120);
@@ -356,12 +354,17 @@ void setup() {
   #if DEBUG
   Serial.println("");
   Serial.print("EEPROM data: ");
-  EEPROM.get(0,str);
+  #endif
+
   for ( int i=0; i<10; i++ ) {
-//    str[i] = EEPROM.read(i);
+    str[i] = EEPROM.read(i);
+    #if DEBUG
     Serial.print(str[i], HEX);
     Serial.print(":");
+    #endif
   }
+  
+  #if DEBUG
   Serial.print(" (");
   Serial.print(str);
   Serial.println(")");
@@ -402,13 +405,13 @@ void setup() {
     if ( dht ) {
       // initialize DHT sensor
       dht->begin();
-      char temp[8];
-      EEPROM.get(0,temp);
-      tempAdjust = atof(temp);  // temperature adjustment (set via MQTT message)
-      #if DEBUG
-      Serial.print("Temperature adjust: ");
-      Serial.println(tempAdjust, DEC);
-      #endif
+      if ( strncmp(str,"esp",3)==0 ) {
+        tempAdjust = atof(&str[3]);  // temperature adjustment (set via MQTT message)
+        #if DEBUG
+        Serial.print("Temperature adjust: ");
+        Serial.println(tempAdjust, DEC);
+        #endif
+      }
     } // DHT
   
     if ( oneWire ) {
@@ -621,7 +624,7 @@ void loop() {
   if ( atoi(c_pirsensor) ) {
     // detect motion and publish immediately
     int lPIRState = digitalRead(PIRPIN);
-    if (lPIRState != PIRState ) {
+    if ( lPIRState != PIRState ) {
       PIRState = lPIRState;
       sprintf(outTopic, "%s/%s/sensor/motion", MQTTBASE, clientId);
       client.publish(outTopic, PIRState == HIGH? "1": "0");
@@ -632,8 +635,8 @@ void loop() {
     }
   }
 
-  // wait 1s until next update (also DHT limitation)
-  delay(1000);
+  // wait 250ms until next update (also DHT limitation)
+  delay(250);
 }
 
 //---------------------------------------------------
@@ -652,6 +655,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
 
   // Switch on the LED if an 1 was received as first character
   if ( strstr(topic,"/led/command") ) {
+
     if ( strncmp((char*)payload,"on",length)==0 ) {
       digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
       // but actually the LED is on; this is because
@@ -659,6 +663,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     } else if ( strncmp((char*)payload,"off",length)==0 ) {
       digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
     }
+
   } else if ( strstr(topic,"/relay/") && strstr(topic,"/command") ) {
     // topic contains relay command
 
@@ -696,11 +701,12 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       EEPROM.commit();
       EEPROM.end();
       #if DEBUG
-      Serial.print("EEPROM save: ");
+      Serial.print("Relay EEPROM save: ");
       Serial.println(b,BIN);
       #endif
       #endif
     }
+
   } else if ( strstr(topic,"/temperature/command") ) {
     // insert temperature adjustment and store it into non volatile memory (wonky DHT sensors)
     
@@ -710,9 +716,11 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     float temp = atof(tmp);
     if ( temp < 100.0 && temp > -100.0 ) {
       tempAdjust = temp;
-      ftoa(tempAdjust, tmp, 2);
+      sprintf(tmp, "esp%3.1f", tempAdjust);
       EEPROM.begin(10);
-      EEPROM.put(0, tmp);
+      for ( int i=0; i<9; i++ ) {
+        EEPROM.write(i, tmp[i]);
+      }
       EEPROM.commit();
       EEPROM.end();
       #if DEBUG
@@ -720,6 +728,34 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       Serial.println(tempAdjust, DEC);
       #endif
     }
+
+  } else if ( strstr(topic,"/command/restart") ) {
+
+    // restart ESP
+    ESP.reset();
+    delay(1000);
+    
+  } else if ( strstr(topic,"/command/reset") ) {
+
+    // erase 10 bytes from EEPROM
+    EEPROM.begin(10);
+    for ( int i=0; i<10; i++ ) {
+      EEPROM.write(i, '\0');
+    }
+    EEPROM.commit();
+    EEPROM.end();
+    delay(120);  // wait for write to complete
+
+    // clean FS
+    SPIFFS.format();
+
+    // clear WiFi data & disconnect
+    WiFi.disconnect();
+
+    // restart ESP
+    ESP.reset();
+    delay(1000);
+    
   }
 }
 
