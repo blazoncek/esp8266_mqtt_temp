@@ -6,15 +6,23 @@
  (c) blaz@kristan-sp.si / 2019-09-10
 */
 
+// NOTE: Enable SPIFFS on the board (64k minimum)
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
 
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>          // multicast DNS
+#include <WiFiUdp.h>              // UDP handling
+#include <ArduinoOTA.h>           // OTA updates
 #include <EEPROM.h>
 #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
 #include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
+
+#define MQTT_MAX_PACKET_SIZE 1024
 #include <PubSubClient.h>
+
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
+
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "DHT.h"
@@ -23,7 +31,7 @@
 
 // general purpose digital inputs (pin D1)
 int D1PIN = D1;
-int D1InputState = 0;   // pin D1
+int D1InputState = 0;   // pin D1 (0==not in use, 1==in use; 2==reserved)
 
 // PIR sensor or button/switch pin & state
 int PIRPIN = D3;        // pin used for PIR (default D3 for Wemos D1 mini shield; D3 must NOT be LOW on boot)
@@ -99,7 +107,7 @@ void setup() {
   WiFiMAC.replace(":","");
   WiFiMAC.toCharArray(mac_address, 16);
   // Create client ID from MAC address
-  sprintf(clientId, "esp-%s", &mac_address[6]);
+  sprintf(clientId, "D1mini-%s", &mac_address[6]);
 
   #if DEBUG
   Serial.println("");
@@ -474,6 +482,43 @@ void setup() {
     pinMode(D8, OUTPUT);
   }
 
+  // OTA update setup
+  //ArduinoOTA.setPort(8266);
+  ArduinoOTA.setHostname(clientId);
+  //ArduinoOTA.setPassword("ota_password");
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_FS
+      type = "filesystem";
+    }
+    #if DEBUG
+    Serial.println("Start updating " + type);
+    #endif
+  });
+  ArduinoOTA.onEnd([]() {
+    #if DEBUG
+    Serial.println("\nEnd");
+    #endif
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    #if DEBUG
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    #endif
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    #if DEBUG
+    Serial.printf("Error[%u]: ", error);
+    if      (error == OTA_AUTH_ERROR)    Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR)   Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR)     Serial.println("End Failed");
+    #endif
+  });
+  ArduinoOTA.begin();
+
   // initialize MQTT connection & provide callback function
   client.setServer(mqtt_server, atoi(mqtt_port));
   client.setCallback(mqtt_callback);
@@ -482,6 +527,10 @@ void setup() {
 //-----------------------------------------------------------
 // main loop
 void loop() {
+  long now = millis();
+
+  // handle OTA updates
+  ArduinoOTA.handle();
 
   if (!client.connected()) {
     mqtt_reconnect();
@@ -489,7 +538,6 @@ void loop() {
   client.loop();
 
   // publish status every 60s
-  long now = millis();
   if (now - lastMsg > 60000) {
     lastMsg = now;
     
@@ -642,6 +690,13 @@ void loop() {
 //---------------------------------------------------
 // MQTT callback function
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+  char tmp[80];
+  boolean lRestart = false;
+
+  payload[length] = '\0'; // "just in case" fix
+
+  // convert to String & int for easier handling
+  String newPayload = String((char *)payload);
 
   #if DEBUG
   Serial.print("Message arrived [");
@@ -781,12 +836,14 @@ void mqtt_reconnect() {
       doc["pirsensor"] = c_pirsensor;
       doc["d1enabled"] = c_d1enabled;
       doc["tempadjust"] = ftoa(tempAdjust, inTopic, 2);
+      
       size_t n = serializeJson(doc, msg);
       #if DEBUG
       Serial.println(msg);
       #endif
       sprintf(outTopic, "%s/%s/announce", MQTTBASE, clientId);
       client.publish(outTopic, msg, n);
+      
       // ... and resubscribe
       sprintf(inTopic, "%s/%s/#", MQTTBASE, clientId);
       client.subscribe(inTopic);
