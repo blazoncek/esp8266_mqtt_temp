@@ -6,7 +6,7 @@
  (c) blaz@kristan-sp.si / 2019-09-10
 */
 
-// NOTE: Enable SPIFFS on the board (64k minimum)
+// NOTE: Enable SPIFFS on the board (2M maximum for OTA updates on Wemos D1 Mini)
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
 
 #include <ESP8266WiFi.h>
@@ -64,7 +64,7 @@ char mqtt_server[40] = "192.168.70.11";
 char mqtt_port[7]    = "1883";
 char username[33]    = "";
 char password[33]    = "";
-char MQTTBASE[16]    = "test"; // use 'shellies' for Shelly API (ShellyMQTT Domoticz plugin integration)
+char MQTTBASE[16]    = "shellies"; // use 'shellies' for Shelly API (ShellyMQTT Domoticz plugin integration)
 
 char c_relays[2]     = "0";
 char c_dhttype[8]    = "none";
@@ -99,10 +99,6 @@ void setup() {
   Serial.begin(115200);
   delay(3000);
 
-  // Initialize the BUILTIN_LED pin as an output & set initial state LED on
-  pinMode(BUILTIN_LED, OUTPUT);
-  digitalWrite(BUILTIN_LED, LOW);
-  
   String WiFiMAC = WiFi.macAddress();
   WiFiMAC.replace(":","");
   WiFiMAC.toCharArray(mac_address, 16);
@@ -353,9 +349,6 @@ void setup() {
   }
 //----------------------------------------------------------
 
-  // if connected set state LED off
-  digitalWrite(BUILTIN_LED, HIGH);
-
   // request 10 bytes from EEPROM
   EEPROM.begin(10);
 
@@ -528,6 +521,7 @@ void setup() {
 // main loop
 void loop() {
   long now = millis();
+  static long lastChg = 0;
 
   // handle OTA updates
   ArduinoOTA.handle();
@@ -536,6 +530,35 @@ void loop() {
     mqtt_reconnect();
   }
   client.loop();
+
+  if ( atoi(c_d1enabled) ) {
+    // detect digital input cahnge and publish immediately
+    int lDState = digitalRead(D1PIN);
+    if (lDState != D1InputState ) {
+      D1InputState = lDState;
+      sprintf(outTopic, "%s/%s/input/%i", MQTTBASE, clientId, 0);
+      client.publish(outTopic, D1InputState == HIGH? "1": "0");
+      #if DEBUG
+      Serial.print("Digital input D1: ");
+      Serial.println(D1InputState == HIGH? "1": "0");
+      #endif
+    }
+  }
+
+  if ( atoi(c_pirsensor) ) {
+    // detect motion and publish immediately
+    int lPIRState = digitalRead(PIRPIN);
+    if ( lPIRState != PIRState && (now - lastChg > 60000 || lPIRState) ) { // min. time duration for PIR sensor 1 min
+      lastChg = millis();
+      PIRState = lPIRState;
+      sprintf(outTopic, "%s/%s/sensor/motion", MQTTBASE, clientId);
+      client.publish(outTopic, PIRState == HIGH? "1": "0");
+      #if DEBUG
+      Serial.print("PIR motion: ");
+      Serial.println(PIRState == HIGH? "on": "off");
+      #endif
+    }
+  }
 
   // publish status every 60s
   if (now - lastMsg > 60000) {
@@ -619,13 +642,13 @@ void loop() {
       sprintf(outTopic, "%s/%s/input/%i", MQTTBASE, clientId, 0);
       client.publish(outTopic, D1InputState == HIGH? "1": "0");
     }
-
+/*
     if ( atoi(c_pirsensor) ) {
       // may use Shelly MQTT API as (shellies/shellysense-MAC/sensor/motion)
       sprintf(outTopic, "%s/%s/sensor/motion", MQTTBASE, clientId);
       client.publish(outTopic, PIRState == HIGH? "1": "0");
     }
-
+*/
     if ( atoi(c_analog) ) {
       // to overcome electrolysis on resistive soil moisture meter we will use D8 pin to power the AD converter/sensor
       digitalWrite(D8, HIGH);   // power ON (may need to add transistor to the pin)
@@ -655,34 +678,6 @@ void loop() {
 
   }  // end 60s reporting
 
-  if ( atoi(c_d1enabled) ) {
-    // detect digital input cahnge and publish immediately
-    int lDState = digitalRead(D1PIN);
-    if (lDState != D1InputState ) {
-      D1InputState = lDState;
-      sprintf(outTopic, "%s/%s/input/%i", MQTTBASE, clientId, 0);
-      client.publish(outTopic, D1InputState == HIGH? "1": "0");
-      #if DEBUG
-      Serial.print("Digital input D1: ");
-      Serial.println(D1InputState == HIGH? "1": "0");
-      #endif
-    }
-  }
-
-  if ( atoi(c_pirsensor) ) {
-    // detect motion and publish immediately
-    int lPIRState = digitalRead(PIRPIN);
-    if ( lPIRState != PIRState ) {
-      PIRState = lPIRState;
-      sprintf(outTopic, "%s/%s/sensor/motion", MQTTBASE, clientId);
-      client.publish(outTopic, PIRState == HIGH? "1": "0");
-      #if DEBUG
-      Serial.print("PIR motion: ");
-      Serial.println(PIRState == HIGH? "on": "off");
-      #endif
-    }
-  }
-
   // wait 250ms until next update (also DHT limitation)
   delay(250);
 }
@@ -708,18 +703,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
   Serial.println();
   #endif
 
-  // Switch on the LED if an 1 was received as first character
-  if ( strstr(topic,"/led/command") ) {
-
-    if ( strncmp((char*)payload,"on",length)==0 ) {
-      digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-      // but actually the LED is on; this is because
-      // it is active low on the ESP-01)
-    } else if ( strncmp((char*)payload,"off",length)==0 ) {
-      digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
-    }
-
-  } else if ( strstr(topic,"/relay/") && strstr(topic,"/command") ) {
+  if ( strstr(topic,"/relay/") && strstr(topic,"/command") ) {
     // topic contains relay command
 
     int relayId = (int)(*(strstr(topic,"/command")-1) - '0');  // get the relay id (0-3)
